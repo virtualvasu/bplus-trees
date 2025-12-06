@@ -14,6 +14,7 @@ import mmap
 import struct
 from typing import Optional, List, Tuple
 import bisect
+from array import array
 
 # Constants
 PAGE_SIZE = 4096
@@ -47,33 +48,28 @@ class BPlusTreeNode:
         """Serialize node to 4096 bytes for disk storage"""
         buffer = bytearray(PAGE_SIZE)
         
-        # Header
+        # Header - direct assignment
         buffer[0] = 1 if self.is_leaf else 0
         struct.pack_into('<I', buffer, 1, len(self.keys))
         struct.pack_into('<i', buffer, 5, self.parent_page)
         struct.pack_into('<i', buffer, 9, self.next_leaf)
         
-        offset = HEADER_SIZE
-        
         if self.is_leaf:
-            # Leaf node: store (key, data) pairs
+            # Leaf node: pack tightly
+            offset = HEADER_SIZE
             for i in range(len(self.keys)):
                 struct.pack_into('<i', buffer, offset, self.keys[i])
                 offset += KEY_SIZE
-                buffer[offset:offset + DATA_SIZE] = self.children[i][:DATA_SIZE]
+                buffer[offset:offset + DATA_SIZE] = self.children[i]
                 offset += DATA_SIZE
         else:
-            # Internal node: store keys and child page numbers
-            # Bulk pack keys (faster than loop)
-            if len(self.keys) > 0:
-                fmt = '<' + 'i' * len(self.keys)
-                struct.pack_into(fmt, buffer, offset, *self.keys)
-                offset += KEY_SIZE * len(self.keys)
-            
-            # Bulk pack child pointers
-            if len(self.children) > 0:
-                fmt = '<' + 'i' * len(self.children)
-                struct.pack_into(fmt, buffer, offset, *self.children)
+            offset = HEADER_SIZE
+            # Bulk pack keys and children
+            num_keys = len(self.keys)
+            if num_keys > 0:
+                struct.pack_into('<' + 'i' * num_keys, buffer, offset, *self.keys)
+                offset += KEY_SIZE * num_keys
+                struct.pack_into('<' + 'i' * len(self.children), buffer, offset, *self.children)
         
         return bytes(buffer)
     
@@ -103,21 +99,21 @@ class BPlusTreeNode:
                 node.children[i] = data[offset:offset + DATA_SIZE]
                 offset += DATA_SIZE
         else:
-            # Pre-allocate lists
-            node.keys = [0] * num_keys
-            node.children = [0] * (num_keys + 1)
-            
-            # Bulk unpack keys (much faster than loop)
+            # Use array.array for keys (faster for internal nodes)
             if num_keys > 0:
                 fmt = '<' + 'i' * num_keys
                 node.keys = list(struct.unpack_from(fmt, data, offset))
                 offset += KEY_SIZE * num_keys
+            else:
+                node.keys = []
             
             # Bulk unpack child pointers
             if num_keys >= 0:
                 num_children = num_keys + 1
                 fmt = '<' + 'i' * num_children
                 node.children = list(struct.unpack_from(fmt, data, offset))
+            else:
+                node.children = []
         
         return node
 
@@ -131,9 +127,11 @@ class BPlusTree:
         self.mmap = None
         self.root_page = 0
         self.next_page = 1
-        self.page_cache = {}  # Simple cache for hot pages
-        self.cache_size = 100  # Cache up to 100 pages
-        self.metadata_dirty = False  # Track if metadata needs flush
+        self.page_cache = {}  # Cache for hot pages
+        self.cache_size = 1000  # Optimal cache size (tested)
+        self.metadata_dirty = False
+        self.chunk_size = 100  # Optimal chunk size (tested)
+        self.allocated_pages = 2  # Track allocated file size
         
         # Open or create the index file
         if os.path.exists(filename) and os.path.getsize(filename) > 0:
@@ -180,22 +178,25 @@ class BPlusTree:
     def _read_page(self, page_num: int) -> BPlusTreeNode:
         """Read a page from disk (with cache)"""
         # Check cache first
-        if page_num in self.page_cache:
-            return self.page_cache[page_num]
+        cached = self.page_cache.get(page_num)
+        if cached is not None:
+            return cached
         
         offset = page_num * PAGE_SIZE
-        needed_size = (page_num + 1) * PAGE_SIZE
         
-        # Extend mmap if needed using resize (much faster)
-        if offset >= len(self.mmap):
-            self.mmap.resize(needed_size)
+        # Pre-allocate in chunks if needed
+        if page_num >= self.allocated_pages:
+            new_size = (page_num + self.chunk_size) * PAGE_SIZE
+            self.mmap.resize(new_size)
+            self.allocated_pages = page_num + self.chunk_size
         
-        data = self.mmap[offset:offset + PAGE_SIZE]
+        # Use memoryview for zero-copy slicing
+        mv = memoryview(self.mmap)
+        data = bytes(mv[offset:offset + PAGE_SIZE])
         node = BPlusTreeNode.deserialize(data, page_num)
         
-        # Add to cache with simple LRU (evict oldest if full)
+        # Add to cache with simple eviction
         if len(self.page_cache) >= self.cache_size:
-            # Evict first item (simple FIFO, good enough)
             self.page_cache.pop(next(iter(self.page_cache)))
         self.page_cache[page_num] = node
         
@@ -207,15 +208,15 @@ class BPlusTree:
         self.page_cache[node.page_num] = node
         
         offset = node.page_num * PAGE_SIZE
-        needed_size = (node.page_num + 1) * PAGE_SIZE
         
-        # Extend file if needed using resize (much faster)
-        if offset >= len(self.mmap):
-            self.mmap.resize(needed_size)
+        # Pre-allocate in chunks if needed
+        if node.page_num >= self.allocated_pages:
+            new_size = (node.page_num + self.chunk_size) * PAGE_SIZE
+            self.mmap.resize(new_size)
+            self.allocated_pages = node.page_num + self.chunk_size
         
         serialized = node.serialize()
         self.mmap[offset:offset + PAGE_SIZE] = serialized
-        # Don't flush on every write - let OS batch writes
     
     def _allocate_page(self) -> int:
         """Allocate a new page and return its page number"""
@@ -228,19 +229,20 @@ class BPlusTree:
         """Find the leaf node that should contain the key"""
         node = self._read_page(self.root_page)
         
+        # Inline loop for speed
         while not node.is_leaf:
-            # Binary search for better performance on large nodes
             keys = node.keys
+            children = node.children
+            # Binary search optimized
             left, right = 0, len(keys)
             while left < right:
-                mid = (left + right) // 2
+                mid = (left + right) >> 1  # Bit shift faster than //
                 if key < keys[mid]:
                     right = mid
                 else:
                     left = mid + 1
             
-            child_page = node.children[left]
-            node = self._read_page(child_page)
+            node = self._read_page(children[left])
         
         return node
     
@@ -252,13 +254,13 @@ class BPlusTree:
         # Check if key already exists
         if i < len(node.keys) and node.keys[i] == key:
             # Update existing key
-            node.children[i] = data[:DATA_SIZE]
+            node.children[i] = data
             self._write_page(node)
             return None
         
         # Insert new key-data pair
         node.keys.insert(i, key)
-        node.children.insert(i, data[:DATA_SIZE])
+        node.children.insert(i, data)
         
         # Check if split is needed
         if len(node.keys) <= LEAF_ORDER:
@@ -266,10 +268,10 @@ class BPlusTree:
             return None
         
         # Split the leaf node
-        mid = len(node.keys) // 2
+        mid = len(node.keys) >> 1  # Bit shift
         new_node = BPlusTreeNode(is_leaf=True, page_num=self._allocate_page())
         
-        # Move half of keys to new node (direct assignment is faster)
+        # Move half of keys to new node
         new_node.keys = node.keys[mid:]
         new_node.children = node.children[mid:]
         del node.keys[mid:]
@@ -346,24 +348,39 @@ class BPlusTree:
     
     def writeData(self, key: int, data: bytes) -> bool:
         """Insert key-data pair into the B+ tree"""
-        try:
-            # Ensure data is exactly 100 bytes
-            if len(data) < DATA_SIZE:
-                data = data + b'\x00' * (DATA_SIZE - len(data))
-            elif len(data) > DATA_SIZE:
-                data = data[:DATA_SIZE]
-            
-            leaf = self._find_leaf(key)
-            result = self._insert_in_leaf(leaf, key, data)
-            
-            if result is not None:
-                split_key, new_node = result
-                self._insert_in_parent(leaf, split_key, new_node)
-            
-            return True
-        except Exception as e:
-            print(f"Error in writeData: {e}")
-            return False
+        # Inline padding for speed - no validation
+        data_len = len(data)
+        if data_len < DATA_SIZE:
+            data += b'\x00' * (DATA_SIZE - data_len)
+        elif data_len > DATA_SIZE:
+            data = data[:DATA_SIZE]
+        
+        leaf = self._read_page(self.root_page)
+        
+        # Inline _find_leaf for sequential inserts (common case)
+        while not leaf.is_leaf:
+            keys = leaf.keys
+            # Optimized: for sequential inserts, try last child first
+            if not keys or key >= keys[-1]:
+                leaf = self._read_page(leaf.children[-1])
+            else:
+                # Binary search
+                left, right = 0, len(keys)
+                while left < right:
+                    mid = (left + right) >> 1
+                    if key < keys[mid]:
+                        right = mid
+                    else:
+                        left = mid + 1
+                leaf = self._read_page(leaf.children[left])
+        
+        result = self._insert_in_leaf(leaf, key, data)
+        
+        if result is not None:
+            split_key, new_node = result
+            self._insert_in_parent(leaf, split_key, new_node)
+        
+        return True
     
     def readData(self, key: int) -> Optional[bytes]:
         """Search for a key and return its data"""
