@@ -1,0 +1,23 @@
+# B+ Tree Index Implementation
+# No external dependencies required
+# 
+# This project uses only Python standard library modules:
+# - os
+# - mmap
+# - struct
+# - typing
+# - time
+# - random
+#
+# Minimum Python version: 3.6
+#
+# To verify your Python installation, run:
+#   python3 --version
+#
+# The following standard library modules are used:
+# - os: File and path operations
+# - mmap: Memory-mapped file I/O
+# - struct: Binary data packing/unpacking
+# - typing: Type hints (Optional, List, Tuple)
+# - time: Performance measurements
+# - random: Test data generation
