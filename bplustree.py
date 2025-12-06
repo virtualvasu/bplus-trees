@@ -33,6 +33,7 @@ LEAF_ORDER = (PAGE_SIZE - HEADER_SIZE) // (KEY_SIZE + DATA_SIZE)  # ~39
 
 class BPlusTreeNode:
     """Represents a node in the B+ tree (either internal or leaf)"""
+    __slots__ = ('is_leaf', 'page_num', 'keys', 'children', 'parent_page', 'next_leaf')
     
     def __init__(self, is_leaf: bool = True, page_num: int = 0):
         self.is_leaf = is_leaf
@@ -130,6 +131,9 @@ class BPlusTree:
         self.mmap = None
         self.root_page = 0
         self.next_page = 1
+        self.page_cache = {}  # Simple cache for hot pages
+        self.cache_size = 100  # Cache up to 100 pages
+        self.metadata_dirty = False  # Track if metadata needs flush
         
         # Open or create the index file
         if os.path.exists(filename) and os.path.getsize(filename) > 0:
@@ -171,10 +175,14 @@ class BPlusTree:
         """Write metadata to page 0"""
         struct.pack_into('<I', self.mmap, 0, self.root_page)
         struct.pack_into('<I', self.mmap, 4, self.next_page)
-        # Don't flush on every metadata write - let OS handle it
+        self.metadata_dirty = True  # Mark dirty, flush later
     
     def _read_page(self, page_num: int) -> BPlusTreeNode:
-        """Read a page from disk"""
+        """Read a page from disk (with cache)"""
+        # Check cache first
+        if page_num in self.page_cache:
+            return self.page_cache[page_num]
+        
         offset = page_num * PAGE_SIZE
         needed_size = (page_num + 1) * PAGE_SIZE
         
@@ -183,10 +191,21 @@ class BPlusTree:
             self.mmap.resize(needed_size)
         
         data = self.mmap[offset:offset + PAGE_SIZE]
-        return BPlusTreeNode.deserialize(data, page_num)
+        node = BPlusTreeNode.deserialize(data, page_num)
+        
+        # Add to cache with simple LRU (evict oldest if full)
+        if len(self.page_cache) >= self.cache_size:
+            # Evict first item (simple FIFO, good enough)
+            self.page_cache.pop(next(iter(self.page_cache)))
+        self.page_cache[page_num] = node
+        
+        return node
     
     def _write_page(self, node: BPlusTreeNode):
         """Write a page to disk"""
+        # Update cache
+        self.page_cache[node.page_num] = node
+        
         offset = node.page_num * PAGE_SIZE
         needed_size = (node.page_num + 1) * PAGE_SIZE
         
@@ -250,11 +269,11 @@ class BPlusTree:
         mid = len(node.keys) // 2
         new_node = BPlusTreeNode(is_leaf=True, page_num=self._allocate_page())
         
-        # Move half of keys to new node
+        # Move half of keys to new node (direct assignment is faster)
         new_node.keys = node.keys[mid:]
         new_node.children = node.children[mid:]
-        node.keys = node.keys[:mid]
-        node.children = node.children[:mid]
+        del node.keys[mid:]
+        del node.children[mid:]
         
         # Update leaf pointers
         new_node.next_leaf = node.next_leaf
@@ -281,8 +300,7 @@ class BPlusTree:
             self.root_page = new_root.page_num
             self._write_metadata()
             self._write_page(new_root)
-            self._write_page(left_node)
-            self._write_page(right_node)
+            # Left and right already written in caller, skip redundant writes
             return
         
         # Insert in existing parent
@@ -308,8 +326,8 @@ class BPlusTree:
         new_parent = BPlusTreeNode(is_leaf=False, page_num=self._allocate_page())
         new_parent.keys = parent.keys[mid + 1:]
         new_parent.children = parent.children[mid + 1:]
-        parent.keys = parent.keys[:mid]
-        parent.children = parent.children[:mid + 1]
+        del parent.keys[mid:]
+        del parent.children[mid + 1:]
         
         # Update children's parent pointers
         for child_page in new_parent.children:
@@ -593,6 +611,10 @@ class BPlusTree:
         """Close the index file"""
         try:
             if self.mmap is not None:
+                # Flush any pending metadata
+                if self.metadata_dirty:
+                    self.mmap.flush(0, PAGE_SIZE)  # Flush only metadata page
+                # Flush all data
                 self.mmap.flush()  # Flush all writes on close
                 self.mmap.close()
                 self.mmap = None
@@ -605,6 +627,9 @@ class BPlusTree:
                 self.file = None
         except:
             pass
+        
+        # Clear cache
+        self.page_cache.clear()
     
     def __del__(self):
         """Destructor to ensure file is closed"""
