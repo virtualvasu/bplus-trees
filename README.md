@@ -1,342 +1,398 @@
 # B+ Tree Index Implementation
 
-A high-performance disk-based B+ tree index implementation for database systems with memory-mapped I/O.
-
-## Overview
-
-This project implements a B+ tree index as used in database systems. The index is stored in a file on disk and supports efficient insertion, deletion, point queries, and range queries. The implementation uses memory-mapped I/O for optimal performance and supports datasets that exceed available RAM.
+A high-performance B+ tree index implementation for databases with disk-based storage using memory-mapped I/O.
 
 ## Features
 
-- **Disk-based Storage**: All data persists in a single index file with 4096-byte pages
-- **Memory-mapped I/O**: Efficient disk access without manual buffer management
-- **Integer Keys**: Optimized for 32-bit integer keys
-- **Fixed-size Data**: Each tuple stored in 100-byte fixed-size blocks
-- **Complete B+ Tree Operations**:
-  - Insert/Update (`writeData`)
-  - Delete with rebalancing (`deleteData`)
-  - Point queries (`readData`)
-  - Range queries (`readRangeData`)
-- **Persistent Storage**: Data survives program restarts
-- **Automatic Node Splitting/Merging**: Maintains B+ tree properties
+- **Optimized for Speed**: Tuned for maximum performance with native architecture optimizations
+- **Memory-Mapped I/O**: Direct memory access to disk pages for minimal overhead
+- **Persistent Storage**: All data persists to disk automatically
+- **Large Dataset Support**: Handles datasets larger than RAM efficiently
+- **Standard API**: Simple C-style API for easy integration
+- **4KB Pages**: Industry-standard 4096-byte page size
+- **Fixed-Size Records**: 100-byte data records with integer keys
 
-## Specifications
+## Technical Specifications
 
-| Parameter | Value |
-|-----------|-------|
-| Page Size | 4096 bytes |
-| Key Type | Integer (4 bytes) |
-| Data Size | 100 bytes per tuple |
-| Internal Node Order | ~509 |
-| Leaf Node Order | ~39 |
-| I/O Method | Memory-mapped I/O |
+- **Page Size**: 4096 bytes
+- **Data Size**: 100 bytes per record
+- **Key Type**: 32-bit signed integer
+- **Leaf Node Capacity**: 39 entries per leaf
+- **Internal Node Fanout**: 510 children per internal node
+- **Storage**: File-backed with memory-mapped I/O
 
 ## Requirements
 
-- Python 3.6 or higher
-- Standard library only (no external dependencies)
-- Linux/Unix system (tested on Ubuntu)
-
-## Project Structure
-
-```
-dbms_project/
-├── bplustree.py       # Core B+ tree implementation
-├── driver.py          # Comprehensive test driver
-├── Makefile           # Build and run automation
-├── README.md          # This file
-└── API_DOCS.md        # Detailed API documentation
-```
-
-## Installation & Setup
-
-### Quick Start
-
-1. **Clone or extract the project**:
-   ```bash
-   cd /home/virtualvasu/Desktop/sem5/dbms_project
-   ```
-
-2. **Verify Python installation**:
-   ```bash
-   python3 --version
-   # Should show Python 3.6 or higher
-   ```
-
-3. **Make scripts executable**:
-   ```bash
-   chmod +x driver.py
-   ```
-
-### Using Makefile
-
-The project includes a Makefile for easy compilation and execution:
-
+### Ubuntu/Linux
 ```bash
-# Run the test driver
-make run
-
-# Run tests and save output to log file
-make test
-
-# Clean generated files
-make clean
-
-# View help
-make help
+sudo apt-get update
+sudo apt-get install build-essential g++
 ```
 
-## Usage
+### Required Tools
+- GCC/G++ compiler (version 4.8 or later)
+- Make utility
+- POSIX-compliant system (Linux, Unix, macOS)
 
-### Running the Driver Program
+## Setup and Installation
 
-The driver program tests all functionalities:
-
+### 1. Extract Files
 ```bash
-# Method 1: Using Makefile
+cd /path/to/dbms
+ls -la
+# You should see: bptree.h, bptree.cpp, test_driver.cpp, Makefile, README.md
+```
+
+### 2. Compilation
+
+#### Quick Build
+```bash
+make
+```
+
+#### Build with Verbose Output
+```bash
+make clean && make
+```
+
+#### Build Static Library Only
+```bash
+make library
+```
+
+### 3. Execution
+
+#### Run Test Driver
+```bash
+./test_driver
+```
+
+#### Run with Performance Timing
+```bash
 make run
-
-# Method 2: Direct execution
-python3 driver.py
-
-# Method 3: With executable permission
-./driver.py
 ```
 
-### Using the B+ Tree in Your Code
+## API Documentation
 
-```python
-from bplustree import BPlusTree
+### Initialization
 
-# Create or open an index
-tree = BPlusTree("myindex.idx")
-
-# Insert data
-key = 42
-data = b"Sample data for key 42"
-success = tree.writeData(key, data)
-
-# Read data
-result = tree.readData(key)
-if result:
-    print(f"Found: {result}")
-
-# Range query
-data_list, count = tree.readRangeData(10, 50)
-print(f"Found {count} records in range [10, 50]")
-
-# Delete data
-success = tree.deleteData(key)
-
-# Always close when done
-tree.close()
+```c
+void initBPTree(const char* filename);
 ```
-
-## API Reference
-
-### writeData(key, data)
-
-Insert or update a key-value pair.
+Initializes the B+ tree index. Creates a new file if it doesn't exist, or loads existing index from file.
 
 **Parameters:**
-- `key` (int): Integer key for indexing
-- `data` (bytes): Data bytes (will be padded/truncated to 100 bytes)
-
-**Returns:**
-- `bool`: True if successful, False otherwise
+- `filename`: Path to the index file
 
 **Example:**
-```python
-tree.writeData(101, b"Student record for ID 101")
+```c
+initBPTree("myindex.dat");
 ```
 
-### readData(key)
+---
 
-Search for a key and retrieve its data.
+### Insert/Update
+
+```c
+int writeData(int key, const unsigned char* data);
+```
+Inserts a new key-value pair or updates existing key with new data.
 
 **Parameters:**
-- `key` (int): Integer key to search for
+- `key`: Integer key for indexing
+- `data`: Pointer to 100-byte data array
 
 **Returns:**
-- `bytes`: 100-byte data if found, None otherwise
+- `1` if successful
+- `0` if failed
 
 **Example:**
-```python
-data = tree.readData(101)
-if data:
-    print(f"Data: {data}")
+```c
+unsigned char data[100];
+memset(data, 42, 100);
+int result = writeData(12345, data);
 ```
 
-### deleteData(key)
+---
 
-Delete a key from the index.
+### Read
+
+```c
+int readData(int key, unsigned char* data_out);
+```
+Searches for a key and retrieves its data.
 
 **Parameters:**
-- `key` (int): Integer key to delete
+- `key`: Integer key to search for
+- `data_out`: Pre-allocated 100-byte buffer for output
 
 **Returns:**
-- `bool`: True if deletion successful, False if key not found
+- `1` if key found (data copied to data_out)
+- `0` if key not found
 
 **Example:**
-```python
-if tree.deleteData(101):
-    print("Deletion successful")
+```c
+unsigned char buffer[100];
+if (readData(12345, buffer)) {
+    printf("Key found!\n");
+}
 ```
 
-### readRangeData(lowerKey, upperKey)
+---
 
-Retrieve all records in a key range (inclusive).
+### Delete
+
+```c
+int deleteData(int key);
+```
+Deletes a key and its associated data from the index.
 
 **Parameters:**
-- `lowerKey` (int): Lower bound of range (inclusive)
-- `upperKey` (int): Upper bound of range (inclusive)
+- `key`: Integer key to delete
 
 **Returns:**
-- `tuple`: (list of data bytes, count) or (None, 0) if no records found
+- `1` if successfully deleted
+- `0` if key not found or deletion failed
 
 **Example:**
-```python
-data_list, count = tree.readRangeData(100, 200)
-print(f"Found {count} records")
-for data in data_list:
-    print(data)
+```c
+int result = deleteData(12345);
 ```
+
+---
+
+### Range Query
+
+```c
+unsigned char** readRangeData(int lowerKey, int upperKey, int* n);
+```
+Retrieves all key-value pairs in the specified range (inclusive).
+
+**Parameters:**
+- `lowerKey`: Lower bound of range (inclusive)
+- `upperKey`: Upper bound of range (inclusive)
+- `n`: Pointer to integer that will store the number of results
+
+**Returns:**
+- Array of pointers to 100-byte data arrays
+- `NULL` if no results found
+
+**Important:** Must free returned data using `freeRangeData()`
+
+**Example:**
+```c
+int count;
+unsigned char** results = readRangeData(100, 200, &count);
+if (results) {
+    printf("Found %d results\n", count);
+    for (int i = 0; i < count; i++) {
+        // Process results[i] (100 bytes)
+    }
+    freeRangeData(results, count);
+}
+```
+
+---
+
+### Free Range Data
+
+```c
+void freeRangeData(unsigned char** data, int n);
+```
+Frees memory allocated by `readRangeData()`.
+
+**Parameters:**
+- `data`: Array returned by `readRangeData()`
+- `n`: Number of entries (returned by `readRangeData()`)
+
+---
+
+### Cleanup
+
+```c
+void closeBPTree(void);
+```
+Closes the B+ tree and flushes all changes to disk. Should be called before program exit.
+
+**Example:**
+```c
+closeBPTree();
+```
+
+## Performance Optimizations
+
+### Implemented Optimizations
+
+1. **Memory-Mapped I/O**: Direct memory access eliminates buffer copying
+2. **Optimal Node Fanout**: Calculated to maximize page utilization
+3. **Binary Search**: Fast logarithmic search in nodes
+4. **Linked Leaf Nodes**: Efficient range queries without tree traversal
+5. **Amortized Growth**: File doubles in size to reduce reallocation overhead
+6. **Compiler Optimizations**: `-O3 -march=native -ffast-math` flags
+7. **Cache-Friendly Layout**: Structures packed to minimize cache misses
+8. **Asynchronous Sync**: Non-blocking writes to disk
+
+### Expected Performance
+
+- **Insertions**: ~50,000-100,000 ops/second
+- **Point Queries**: ~100,000-200,000 ops/second  
+- **Range Queries**: Depends on result size, ~50,000 records/second
+- **Sequential Access**: Faster than random due to cache locality
 
 ## Testing
 
-The `driver.py` program includes comprehensive tests:
+### Run All Tests
+```bash
+make test
+```
 
-1. **Basic Operations Test**: Insert, read, update, delete
-2. **Large Dataset Test**: 10,000 records with performance metrics
-3. **Edge Cases Test**: Boundary conditions, duplicates, non-existent keys
-4. **Persistence Test**: Data survival across program restarts
-5. **Sequential Access Test**: Sequential patterns and range scans
-6. **Performance Benchmark**: Timing for various operations
+### Test Coverage
+The test driver verifies:
+1. Basic insert and read operations
+2. Multiple inserts (100 keys)
+3. Update existing keys
+4. Delete operations
+5. Range queries
+6. Large dataset (100,000 keys)
+7. Persistence (reload from disk)
+8. Sequential vs random access patterns
+9. Edge cases (negative keys, INT_MAX, etc.)
 
-### Running Tests
+## Makefile Targets
 
 ```bash
-# Run all tests
-make test
-
-# Or directly
-python3 driver.py
-
-# Save output to file
-python3 driver.py > test_results.txt
+make          # Build test driver (default)
+make test     # Build and run tests
+make run      # Build and run with timing
+make clean    # Remove build artifacts
+make library  # Build static library
+make help     # Show help message
 ```
 
-### Expected Output
-
-The driver will display:
-- Test progress and results
-- Performance metrics (time per operation)
-- Success/failure status for each test
-- Summary statistics
-
-## Performance
-
-Typical performance on standard Ubuntu desktop (SSD):
-
-| Operation | Dataset Size | Avg Time |
-|-----------|--------------|----------|
-| Insert | 10,000 | ~0.5 ms |
-| Point Query | 10,000 | ~0.2 ms |
-| Range Query (100) | 10,000 | ~2 ms |
-| Delete | 10,000 | ~0.6 ms |
-
-*Note: Performance varies based on hardware and dataset characteristics*
-
-## File Format
-
-The index file uses the following structure:
+## File Structure
 
 ```
-Page 0: Metadata
-  - Bytes 0-3: Root page number
-  - Bytes 4-7: Next available page number
-
-Page 1+: B+ Tree Nodes
-  - Byte 0: Node type (1=leaf, 0=internal)
-  - Bytes 1-4: Number of keys
-  - Bytes 5-8: Parent page number
-  - Bytes 9-12: Next leaf pointer (leaf only)
-  - Bytes 16+: Keys and data/pointers
+dbms/
+├── bptree.h           # API header file
+├── bptree.cpp         # B+ tree implementation
+├── test_driver.cpp    # Test driver program
+├── Makefile           # Build configuration
+├── README.md          # This file
+└── test_index.dat     # Created at runtime (index file)
 ```
 
-## Implementation Details
+## Usage Example
 
-### Node Structure
+```c
+#include "bptree.h"
+#include <stdio.h>
+#include <string.h>
 
-- **Internal Nodes**: Store keys and child page pointers
-- **Leaf Nodes**: Store keys and actual data tuples
-- **Leaf Linking**: Leaf nodes form a linked list for range queries
-
-### Algorithms
-
-- **Insertion**: Standard B+ tree insertion with node splitting
-- **Deletion**: Deletion with node merging and key redistribution
-- **Search**: Binary search within nodes, tree traversal for navigation
-- **Range Query**: Sequential scan through linked leaf nodes
-
-### Memory Management
-
-- Uses Python's `mmap` module for memory-mapped I/O
-- Automatic file extension when needed
-- Efficient page-level I/O
+int main() {
+    // Initialize
+    initBPTree("myindex.dat");
+    
+    // Insert data
+    unsigned char data[100];
+    for (int i = 0; i < 1000; i++) {
+        memset(data, i % 256, 100);
+        writeData(i, data);
+    }
+    
+    // Read data
+    unsigned char buffer[100];
+    if (readData(500, buffer)) {
+        printf("Found key 500\n");
+    }
+    
+    // Range query
+    int count;
+    unsigned char** results = readRangeData(100, 200, &count);
+    printf("Found %d keys in range [100, 200]\n", count);
+    freeRangeData(results, count);
+    
+    // Delete
+    deleteData(500);
+    
+    // Cleanup
+    closeBPTree();
+    
+    return 0;
+}
+```
 
 ## Troubleshooting
 
-### Permission Denied
+### Compilation Errors
 
-```bash
-chmod +x driver.py
-chmod 644 bplustree.py
-```
+**Error: `mmap` not found**
+- Solution: Ensure you're compiling on a POSIX-compliant system (Linux/Unix/macOS)
 
-### Module Not Found
+**Error: `O_CREAT` undeclared**
+- Solution: Check that `<fcntl.h>` is available on your system
 
-Ensure both `bplustree.py` and `driver.py` are in the same directory.
+### Runtime Errors
 
-### File Already Exists
+**Segmentation Fault**
+- Ensure `initBPTree()` is called before any other API functions
+- Ensure `data_out` buffer is allocated (100 bytes) before calling `readData()`
+- Always call `freeRangeData()` after `readRangeData()`
 
-The program handles existing index files automatically. To start fresh:
+**Permission Denied**
+- Ensure write permissions in the directory
+- Check disk space availability
 
-```bash
-make clean
-```
+## Design Decisions
 
-## Compilation and Execution
+### Why Memory-Mapped I/O?
+- **Performance**: Eliminates system call overhead
+- **Simplicity**: OS handles page management
+- **Efficiency**: Lazy loading and automatic write-back
 
-This is a pure Python implementation requiring no compilation:
+### Why 4KB Pages?
+- Standard OS page size for alignment
+- Efficient disk I/O operations
+- Balances memory usage vs. I/O overhead
 
-1. **Verify Python**:
-   ```bash
-   python3 --version
-   ```
+### Node Fanout Calculation
+- **Leaf Nodes**: Maximizes entries while fitting in 4KB page
+- **Internal Nodes**: High fanout (510) reduces tree height for faster searches
 
-2. **Run driver**:
-   ```bash
-   python3 driver.py
-   ```
+## Limitations
 
-3. **Or use Makefile**:
-   ```bash
-   make run
-   ```
+1. **No Concurrency**: Not thread-safe (single-threaded only)
+2. **Simplified Deletion**: Doesn't fully rebalance tree on underflow
+3. **Fixed Data Size**: 100 bytes per record (not variable)
+4. **Integer Keys Only**: Keys must be 32-bit signed integers
 
-## Submission Contents
+## Future Enhancements
 
-- `bplustree.py` - Core implementation
-- `driver.py` - Test driver
-- `Makefile` - Build automation
-- `README.md` - This documentation
-- `API_DOCS.md` - Detailed API documentation (man-style)
-
-## Author
-
-Created for DBMS Course Assignment - Semester 5
+- Thread-safe operations with read-write locks
+- Full tree rebalancing on deletions
+- Variable-length data support
+- Composite key support
+- Bulk loading optimization
 
 ## License
 
-Academic use only - for educational purposes.
+This implementation is provided for educational purposes.
+
+## Author
+
+Created for DBMS course assignment - B+ Tree Index Implementation
+
+## Testing on Ubuntu
+
+```bash
+# On standard Ubuntu desktop
+sudo apt-get install build-essential
+cd /path/to/dbms
+make clean
+make test
+```
+
+Expected output: All tests should pass with performance metrics displayed.
+
+---
+
+For questions or issues, refer to the source code comments or API documentation above.
